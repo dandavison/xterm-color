@@ -161,8 +161,8 @@
 ;; Supported SGR attributes: Look at `xterm-color--dispatch-SGR'.
 ;; SGR attribute 1 is rendered as bright unless `xterm-color-use-bold-for-bright'
 ;; is T which will, if current Emacs font has a bold variant, switch to bold.
-;; SGR attributes 38 and 48 are only supported in their 256 color variants,
-;; not full RGB.
+;; SGR attributes 38 and 48 are supported in both their 8-bit (256 color) and 24-bit
+;; (full RGB) variants.
 
 ;;; Test:
 ;;
@@ -308,6 +308,10 @@ inverse-color, frame, overline SGR state machine bits.")
        (push (list pos (text-properties-at pos string) (substring string pos)) result)
        (cl-return-from xterm-color--string-properties (nreverse result))))))
 
+(defun xterm-color--select-face-property ()
+  "Select face property to be used in text properties or overlays."
+  (if font-lock-mode 'font-lock-face 'face))
+
 (defun xterm-color--message (format-string &rest args)
   "Call `message' with FORMAT-STRING and ARGS if `xterm-color-debug' is not NIL."
   (when xterm-color-debug
@@ -330,7 +334,8 @@ inverse-color, frame, overline SGR state machine bits.")
         (+strike-through+   8)
         (+negative+        16)
         (+frame+           32)
-        (+overline+        64))
+        (+overline+        64)
+        (+24-bit+        128))
      ,@body))
 
 (cl-defmacro xterm-color--create-SGR-table ((attrib SGR-list) &body body)
@@ -365,6 +370,11 @@ By using other functions, it is possible to skip elements."
                            (logior xterm-color--attributes ,attr))))
           (set-f! (fg-color) `(setq xterm-color--current-fg ,fg-color))
           (set-b! (bg-color) `(setq xterm-color--current-bg ,bg-color))
+          (set-24-bit! (triplet current-color)
+                       `(setq ,current-color
+                              (logior (ash (car ,triplet) 16)
+                                      (ash (cadr ,triplet) 8)
+                                      (cl-caddr ,triplet))))
           (reset! ()         `(setq xterm-color--current-fg nil
                                     xterm-color--current-bg nil
                                     xterm-color--attributes 0)))
@@ -416,6 +426,16 @@ By using other functions, it is possible to skip elements."
     (:match (24) (set-a! +underline+ :clear t))
     (:match (27) (set-a! +negative+ :clear t))
     (:match (29) (set-a! +strike-through+ :clear t))
+    (:match ((and (eq 38 (cl-first SGR-list))
+                  (eq 2 (cl-second SGR-list)))          ; 24-bit FG color
+             (lambda (x) (cdr (cl-cddddr x))))
+            (set-a! +24-bit+)
+            (set-24-bit! (cddr SGR-list) xterm-color--current-fg))
+    (:match ((and (eq 48 (cl-first SGR-list))
+                  (eq 2 (cl-second SGR-list)))          ; 24-bit BG color
+             (lambda (x) (cdr (cl-cddddr x))))
+            (set-a! +24-bit+)
+            (set-24-bit! (cddr SGR-list) xterm-color--current-bg))
     (:match (38 'cl-cdddr)                              ; XTERM 256 FG color
             (set-f! (cl-third SGR-list)))
     (:match (48 'cl-cdddr)                              ; XTERM 256 BG color
@@ -484,7 +504,7 @@ in LIFO order."
           (t
            (xterm-color--message "xterm-color: %s CSI not implemented" csi)))))
 
-(defmacro xterm-color--with-ANSI-macro-helpers (&rest body)
+(defmacro xterm-color--with-ANSI-macro-helpers (face-prop &rest body)
   (declare (indent defun))
   `(xterm-color--with-SGR-constants
      (cl-macrolet
@@ -497,11 +517,18 @@ in LIFO order."
                                     xterm-color--current-bg
                                     (/= xterm-color--attributes 0)))
           (has? (attrib)       `(/= (logand ,attrib xterm-color--attributes) 0))
-          (face-cache-get ()   `(gethash (logior (ash xterm-color--attributes 16)
-                                                 (ash (or xterm-color--current-bg 0) 8)
-                                                 (or xterm-color--current-fg 0))
+          (face-cache-get ()   `(gethash (let ((fg (or xterm-color--current-fg 0))
+                                               (bg (or xterm-color--current-bg 0)))
+                                           (if (has? +24-bit+)
+                                               (logior (ash xterm-color--attributes 48)
+                                                       (ash bg 24)
+                                                       fg)
+                                             (logior (ash xterm-color--attributes 16)
+                                                     (ash bg 8)
+                                                     fg)))
                                          xterm-color--face-cache))
           (face! (k v)         `(setq plistf (plist-put plistf ,k ,v)))
+          (xterm-color-24-bit (color) `(format "#%06x" ,color))
           (make-face ()        `(or (face-cache-get)
                                     (let (plistf)
                                       (when (has? +italic+)         (face! :slant 'italic))
@@ -516,27 +543,33 @@ in LIFO order."
                                                        (<= 8 xterm-color--current-fg 15)))
                                               (progn (face! :weight 'bold)
                                                      (face! :foreground
-                                                            (xterm-color-256 (if (<= 8 xterm-color--current-fg)
-                                                                                 (- xterm-color--current-fg 8)
-                                                                               xterm-color--current-fg))))
+                                                            (if (has? +24-bit+)
+                                                                (xterm-color-24-bit xterm-color--current-fg)
+                                                              (xterm-color-256 (if (<= 8 xterm-color--current-fg)
+                                                                                   (- xterm-color--current-fg 8)
+                                                                                 xterm-color--current-fg)))))
                                             (face! :foreground
-                                                   (xterm-color-256
-                                                    (if (and (<= xterm-color--current-fg 7)
-                                                             (has? +bright+))
-                                                        (+ xterm-color--current-fg 8)
-                                                      xterm-color--current-fg))))
+                                                   (if (has? +24-bit+)
+                                                       (xterm-color-24-bit xterm-color--current-fg)
+                                                     (xterm-color-256
+                                                      (if (and (<= xterm-color--current-fg 7)
+                                                               (has? +bright+))
+                                                          (+ xterm-color--current-fg 8)
+                                                        xterm-color--current-fg)))))
                                         (when (and xterm-color-use-bold-for-bright
                                                    (has? +bright+))
                                           (face! :weight 'bold)))
                                       (when xterm-color--current-bg
-                                        (face! :background (xterm-color-256 xterm-color--current-bg)))
+                                        (face! :background (if (has? +24-bit+)
+                                                               (xterm-color-24-bit xterm-color--current-bg)
+                                                             (xterm-color-256 xterm-color--current-bg))))
                                       (setf (face-cache-get) plistf))))
           (maybe-fontify ()    '(when xterm-color--char-list
                                   (let ((s (concat (nreverse xterm-color--char-list))))
                                     (when (color?)
                                       (add-text-properties
                                        0 (length s)
-                                       (list 'xterm-color t (if font-lock-mode 'font-lock-face 'face) (make-face))
+                                       (list 'xterm-color t ,face-prop (make-face))
                                        s))
                                     (out! s))
                                   (setq xterm-color--char-list nil))))
@@ -549,14 +582,20 @@ in LIFO order."
 
 
 ;;;###autoload
-(defun xterm-color-filter-strip (string)
+(defun xterm-color-filter-strip (string &optional face-prop)
   "Translate ANSI color sequences in STRING into text properties.
 Return new STRING with text properties applied.
+
+Optional argument FACE-PROP is the text property to use: this
+will typically be either 'face or 'font-lock-face. If FACE-PROP
+is nil the face property is determined by
+`xterm-color--select-face-property'.
 
 This function strips text properties that may be present in STRING."
   (or xterm-color--face-cache
       (setq xterm-color--face-cache (make-hash-table :weakness 'value)))
   (xterm-color--with-ANSI-macro-helpers
+    (or face-prop (xterm-color--select-face-property))
     (cl-loop
      with state = xterm-color--state and result
      for char across string do
@@ -601,9 +640,14 @@ This function strips text properties that may be present in STRING."
             (mapconcat 'identity (nreverse result) "")))))
 
 ;;;###autoload
-(defun xterm-color-filter (string)
+(defun xterm-color-filter (string &optional face-prop)
   "Translate ANSI color sequences in STRING into text properties.
 Return new STRING with text properties applied.
+
+Optional argument FACE-PROP is the text property to use: this
+will typically be either 'face or 'font-lock-face. If FACE-PROP
+is nil the face property is determined by
+`xterm-color--select-face-property'.
 
 This function will check if `xterm-color-preserve-properties' is
 set to T and only call `xterm-color-filter-strip' on substrings
@@ -615,11 +659,11 @@ It works fine with and is really meant for eshell though.
 
 This can be inserted into `comint-preoutput-filter-functions'."
   (if (not xterm-color-preserve-properties)
-      (xterm-color-filter-strip string)
+      (xterm-color-filter-strip string face-prop)
     (cl-loop
      with result
      for (_ props substring) in (xterm-color--string-properties string) do
-     (push (if props substring (xterm-color-filter-strip substring))
+     (push (if props substring (xterm-color-filter-strip substring face-prop))
            result)
      finally return (mapconcat 'identity (nreverse result) ""))))
 
@@ -656,15 +700,20 @@ This can be inserted into `comint-preoutput-filter-functions'."
 
 
 ;;;###autoload
-(cl-defun xterm-color-colorize-buffer ()
-  "Apply `xterm-color-filter' to current buffer, and replace its contents."
+(cl-defun xterm-color-colorize-buffer (&optional face-prop)
+  "Apply `xterm-color-filter' to current buffer, and replace its contents.
+
+Optional argument FACE-PROP is a symbol naming the face property
+to use: typically either 'face or 'font-lock-face. By default,
+'font-lock-face will be used unless font-lock is disabled."
   (interactive)
   (let ((read-only-p buffer-read-only))
     (when read-only-p
       (unless (y-or-n-p "Buffer is read only, continue colorizing? ")
         (cl-return-from xterm-color-colorize-buffer))
       (read-only-mode -1))
-    (insert (xterm-color-filter (delete-and-extract-region (point-min) (point-max))))
+    (insert (xterm-color-filter (delete-and-extract-region (point-min) (point-max))
+                                face-prop))
     (goto-char (point-min))
     (when read-only-p (read-only-mode 1))))
 
@@ -792,6 +841,32 @@ effect when called from a buffer that does not have a cache."
      (ansi-filter "Default \x1b[94mBright blue\x1b[34m Switch-to-blue (should be normal intensity)\x1b[0m\t --[ AIXTERM bright color should not set bright SGR bit ]\n")
      (insert "\n"))))
 
+(defmacro xterm-color--test-24-bit ()
+  `(cl-flet ((insert-24-bit-color-sequences
+             (rgb-fn)
+             (dolist (seq (list (number-sequence 0 127)
+                                (reverse (number-sequence 255 128))))
+               (dolist (i seq)
+                 (apply #'ansi-filter "\x1b[48;2;%s;%s;%sm \x1b[0m" (funcall rgb-fn i))))
+             (insert "\n"))
+            (rainbow-color
+             (i)
+             (let* ((h (/ i 43))
+                    (f (- i (* 43 h)))
+                    (t_ (/ (* 255 f) 43))
+                    (q (- 255 t_)))
+               (cl-case h
+                 (0 `(255 ,t_ 0))
+                 (1 `(,q 255 0))
+                 (2 `(0 255 ,t_))
+                 (3 `(0 ,q 255))
+                 (4 `(,t_ 0 255))
+                 (5 `(255 0 ,q))))))
+    (insert-24-bit-color-sequences (lambda (i) `(,i 0 0)))
+    (insert-24-bit-color-sequences (lambda (i) `(0 ,i 0)))
+    (insert-24-bit-color-sequences (lambda (i) `(0 0 ,i)))
+    (insert-24-bit-color-sequences #'rainbow-color)))
+
 (defun xterm-color--test-xterm ()
   (xterm-color--with-tests
    ;; System colors
@@ -819,6 +894,11 @@ effect when called from a buffer that does not have a cache."
                               do (ansi-filter "\x1b[48;5;%sm  \x1b[0m" color))
                      (ansi-filter "\x1b[0m "))
             (insert "\n"))
+
+   ;; 24-bit colors
+   (insert "\n")
+   (insert "*  24-bit color ramps\n\n")
+   (xterm-color--test-24-bit)
 
    (insert "\n")
    (insert "*  XTERM color grayscale ramp\n\n")

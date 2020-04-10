@@ -312,6 +312,22 @@ inverse-color, frame, overline SGR state machine bits.")
   "Select face property to be used in text properties or overlays."
   (if font-lock-mode 'font-lock-face 'face))
 
+(defun xterm-color--convert-text-properties-to-overlays (beg end &optional face-prop)
+  "Delete text property FACE-PROP between BEG and END, replacing with equivalent overlays."
+  (let ((face-prop (or face-prop (xterm-color--select-face-property))))
+    (save-excursion
+      (goto-char beg)
+      (while (< (point) end)
+        (let* ((pos (point))
+               (current-value (get-text-property pos face-prop))
+               (next-change (next-single-property-change pos face-prop nil end)))
+          (when current-value
+            (let ((ov (make-overlay pos next-change)))
+              (overlay-put ov face-prop current-value)
+              (overlay-put ov 'xterm-color t)))
+          (goto-char next-change)))
+      (remove-text-properties beg end (list 'xterm-color nil face-prop nil)))))
+
 (defun xterm-color--message (format-string &rest args)
   "Call `message' with FORMAT-STRING and ARGS if `xterm-color-debug' is not NIL."
   (when xterm-color-debug
@@ -700,12 +716,15 @@ This can be inserted into `comint-preoutput-filter-functions'."
 
 
 ;;;###autoload
-(cl-defun xterm-color-colorize-buffer (&optional face-prop)
+(cl-defun xterm-color-colorize-buffer (&optional face-prop use-overlays?)
   "Apply `xterm-color-filter' to current buffer, and replace its contents.
 
 Optional argument FACE-PROP is a symbol naming the face property
 to use: typically either 'face or 'font-lock-face. By default,
-'font-lock-face will be used unless font-lock is disabled."
+'font-lock-face will be used unless font-lock is disabled.
+
+If USE-OVERLAYS? is non-nil then the colors will be applied to
+the buffer using overlays instead of text properties."
   (interactive)
   (let ((read-only-p buffer-read-only))
     (when read-only-p
@@ -714,6 +733,9 @@ to use: typically either 'face or 'font-lock-face. By default,
       (read-only-mode -1))
     (insert (xterm-color-filter (delete-and-extract-region (point-min) (point-max))
                                 face-prop))
+    (when use-overlays?
+        (xterm-color--convert-text-properties-to-overlays
+         (point-min) (point-max) face-prop))
     (goto-char (point-min))
     (when read-only-p (read-only-mode 1))))
 

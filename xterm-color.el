@@ -310,24 +310,22 @@ inverse-color, frame, overline SGR state machine bits.")
        (push (list pos (text-properties-at pos string) (substring string pos)) result)
        (cl-return-from xterm-color--string-properties (nreverse result))))))
 
-(defvar xterm-color--face-property nil)
-
-(make-variable-buffer-local 'xterm-color--face-property)
-
 (defun xterm-color--convert-text-properties-to-overlays (beg end)
   "Delete face text properties between BEG and END, replacing with equivalent overlays."
   (save-excursion
     (goto-char beg)
-    (while (< (point) end)
-      (let* ((pos (point))
-             (current-value (get-text-property pos xterm-color--face-property))
-             (next-change (next-single-property-change pos xterm-color--face-property nil end)))
-        (when current-value
-          (let ((ov (make-overlay pos next-change)))
-            (overlay-put ov xterm-color--face-property current-value)
-            (overlay-put ov 'xterm-color t)))
-        (goto-char next-change)))
-    (remove-text-properties beg end (list 'xterm-color nil xterm-color--face-property nil))))
+    (let ((face-prop (if (next-single-property-change (point) 'font-lock-face)
+                         'font-lock-face 'face)))
+      (while (< (point) end)
+        (let* ((pos (point))
+               (current-value (get-text-property pos face-prop))
+               (next-change (next-single-property-change pos face-prop nil end)))
+          (when current-value
+            (let ((ov (make-overlay pos next-change)))
+              (overlay-put ov face-prop current-value)
+              (overlay-put ov 'xterm-color t)))
+          (goto-char next-change)))
+      (remove-text-properties beg end (list 'xterm-color nil face-prop nil)))))
 
 (defun xterm-color--message (format-string &rest args)
   "Call `message' with FORMAT-STRING and ARGS if `xterm-color-debug' is not NIL."
@@ -595,7 +593,7 @@ in LIFO order."
                                     (when (color?)
                                       (add-text-properties
                                        0 (length s)
-                                       (list 'xterm-color t xterm-color--face-property (make-face))
+                                       (list 'xterm-color t (if font-lock-mode 'font-lock-face 'face) (make-face))
                                        s))
                                     (out! s))
                                   (setq xterm-color--char-list nil))))
@@ -725,8 +723,7 @@ If USE-OVERLAYS is non-nil then the colors will be applied to
 the buffer using overlays instead of text properties. A C-u
 prefix arg causes overlays to be used."
   (interactive "P")
-  (let ((read-only-p buffer-read-only)
-        (xterm-color--face-property (if font-lock-mode 'font-lock-face 'face)))
+  (let ((read-only-p buffer-read-only))
     (when read-only-p
       (unless (y-or-n-p "Buffer is read only, continue colorizing? ")
         (cl-return-from xterm-color-colorize-buffer))
@@ -931,26 +928,24 @@ effect when called from a buffer that does not have a cache."
 (defun xterm-color-test ()
   "Create/display and render a new buffer that contains ANSI control sequences."
   (interactive)
-  (let ((xterm-color--face-property 'face))
+  (let* ((name (generate-new-buffer-name "*xterm-color-test*"))
+         (buf (get-buffer-create name)))
+    (switch-to-buffer buf))
 
-    (let* ((name (generate-new-buffer-name "*xterm-color-test*"))
-           (buf (get-buffer-create name)))
-      (switch-to-buffer buf))
+  (xterm-color--test-xterm)
 
-    (xterm-color--test-xterm)
+  (let ((xterm-color-use-bold-for-bright nil))
+    (xterm-color--test-ansi))
+  (xterm-color-clear-cache)
 
-    (let ((xterm-color-use-bold-for-bright nil))
-      (xterm-color--test-ansi))
-    (xterm-color-clear-cache)
+  (insert "; Temporarily setting `xterm-color-use-bold-for-bright' to T\n")
+  (insert "; Current Emacs font needs to have a bold variant\n\n")
 
-    (insert "; Temporarily setting `xterm-color-use-bold-for-bright' to T\n")
-    (insert "; Current Emacs font needs to have a bold variant\n\n")
+  (let ((xterm-color-use-bold-for-bright t))
+    (xterm-color--test-ansi))
 
-    (let ((xterm-color-use-bold-for-bright t))
-      (xterm-color--test-ansi))
-
-    (setq buffer-read-only t)
-    (goto-char (point-min))))
+  (setq buffer-read-only t)
+  (goto-char (point-min)))
 
 ;;;###autoload
 (defun xterm-color-test-raw ()

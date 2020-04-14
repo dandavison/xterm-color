@@ -352,7 +352,7 @@ inverse-color, frame, overline SGR state machine bits.")
         (+negative+        16)
         (+frame+           32)
         (+overline+        64)
-        (+24-bit+        128))
+        (+truecolor+      128))
      ,@body))
 
 (cl-defmacro xterm-color--create-SGR-table ((attrib SGR-list) &body body)
@@ -387,11 +387,11 @@ by using other functions."
                                    (logand #xff (lognot ,attr)))))
           (set-f! (fg-color) `(setq xterm-color--current-fg ,fg-color))
           (set-b! (bg-color) `(setq xterm-color--current-bg ,bg-color))
-          (set-24-bit! (triplet current-color)
-                       `(setq ,current-color
-                              (logior (ash (car ,triplet) 16)
-                                      (ash (cadr ,triplet) 8)
-                                      (cl-caddr ,triplet))))
+          (set-truecolor! (triplet current-color)
+                             `(setq ,current-color
+                                    (logior (ash (car ,triplet) 16)
+                                            (ash (cadr ,triplet) 8)
+                                            (cl-caddr ,triplet))))
           (reset! ()         `(setq xterm-color--current-fg nil
                                     xterm-color--current-bg nil
                                     xterm-color--attributes 0)))
@@ -448,13 +448,13 @@ by using other functions."
     (:match ((and (eq 38 (cl-first SGR-list))
                   (eq 2 (cl-second SGR-list)))          ; 24-bit FG color
              (lambda (x) (cdr (cl-cddddr x))))
-            (set-a! +24-bit+)
-            (set-24-bit! (cddr SGR-list) xterm-color--current-fg))
+            (set-a! +truecolor+)
+            (set-truecolor! (cddr SGR-list) xterm-color--current-fg))
     (:match ((and (eq 48 (cl-first SGR-list))
                   (eq 2 (cl-second SGR-list)))          ; 24-bit BG color
              (lambda (x) (cdr (cl-cddddr x))))
-            (set-a! +24-bit+)
-            (set-24-bit! (cddr SGR-list) xterm-color--current-bg))
+            (set-a! +truecolor+)
+            (set-truecolor! (cddr SGR-list) xterm-color--current-bg))
     (:match (38 'cl-cdddr)                              ; XTERM 256 FG color
             (set-f! (cl-third SGR-list)))
     (:match (48 'cl-cdddr)                              ; XTERM 256 BG color
@@ -542,7 +542,7 @@ in LIFO order."
           (has? (attrib)       `(/= (logand ,attrib xterm-color--attributes) 0))
           (face-cache-get ()   `(gethash (let ((fg (or xterm-color--current-fg 0))
                                                (bg (or xterm-color--current-bg 0)))
-                                           (if (has? +24-bit+)
+                                           (if (has? +truecolor+)
                                                (logior (ash xterm-color--attributes 48)
                                                        (ash bg 24)
                                                        fg)
@@ -551,7 +551,7 @@ in LIFO order."
                                                      fg)))
                                          xterm-color--face-cache))
           (face! (k v)         `(setq plistf (plist-put plistf ,k ,v)))
-          (xterm-color-24-bit (color) `(format "#%06x" ,color))
+          (truecolor (color)   `(format "#%06x" ,color))
           (make-face ()        `(or (face-cache-get)
                                     (let (plistf)
                                       (when (has? +italic+)         (face! :slant 'italic))
@@ -566,14 +566,14 @@ in LIFO order."
                                                        (<= 8 xterm-color--current-fg 15)))
                                               (progn (face! :weight 'bold)
                                                      (face! :foreground
-                                                            (if (has? +24-bit+)
-                                                                (xterm-color-24-bit xterm-color--current-fg)
+                                                            (if (has? +truecolor+)
+                                                                (truecolor xterm-color--current-fg)
                                                               (xterm-color-256 (if (<= 8 xterm-color--current-fg)
                                                                                    (- xterm-color--current-fg 8)
                                                                                  xterm-color--current-fg)))))
                                             (face! :foreground
-                                                   (if (has? +24-bit+)
-                                                       (xterm-color-24-bit xterm-color--current-fg)
+                                                   (if (has? +truecolor+)
+                                                       (truecolor xterm-color--current-fg)
                                                      (xterm-color-256
                                                       (if (and (<= xterm-color--current-fg 7)
                                                                (has? +bright+))
@@ -583,8 +583,8 @@ in LIFO order."
                                                    (has? +bright+))
                                           (face! :weight 'bold)))
                                       (when xterm-color--current-bg
-                                        (face! :background (if (has? +24-bit+)
-                                                               (xterm-color-24-bit xterm-color--current-bg)
+                                        (face! :background (if (has? +truecolor+)
+                                                               (truecolor xterm-color--current-bg)
                                                              (xterm-color-256 xterm-color--current-bg))))
                                       (setf (face-cache-get) plistf))))
           (maybe-fontify ()    '(when xterm-color--char-list

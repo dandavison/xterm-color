@@ -389,9 +389,9 @@ by using other functions."
           (set-b! (bg-color) `(setq xterm-color--current-bg ,bg-color))
           (set-truecolor! (triplet current-color)
                              `(setq ,current-color
-                                    (logior (ash (car ,triplet) 16)
-                                            (ash (cadr ,triplet) 8)
-                                            (cl-caddr ,triplet))))
+                                    (logior (ash (cl-first ,triplet) 16)
+                                            (ash (cl-second ,triplet) 8)
+                                                 (cl-third ,triplet))))
           (reset! ()         `(setq xterm-color--current-fg nil
                                     xterm-color--current-bg nil
                                     xterm-color--attributes 0)))

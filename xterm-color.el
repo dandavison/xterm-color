@@ -715,13 +715,13 @@ This can be inserted into `comint-preoutput-filter-functions'."
 
 
 ;;;###autoload
-(cl-defun xterm-color-colorize-buffer (&optional use-overlays?)
+(cl-defun xterm-color-colorize-buffer (&optional use-overlays)
   "Apply `xterm-color-filter' to current buffer, and replace its contents.
 
 The colors will be applied using 'font-lock-face, unless
 font-lock-mode is inactive, in which case 'face will be used.
 
-If USE-OVERLAYS? is non-nil then the colors will be applied to
+If USE-OVERLAYS is non-nil then the colors will be applied to
 the buffer using overlays instead of text properties. A C-u
 prefix arg causes overlays to be used."
   (interactive "P")
@@ -732,7 +732,7 @@ prefix arg causes overlays to be used."
         (cl-return-from xterm-color-colorize-buffer))
       (read-only-mode -1))
     (insert (xterm-color-filter (delete-and-extract-region (point-min) (point-max))))
-    (when use-overlays?
+    (when use-overlays
         (xterm-color--convert-text-properties-to-overlays (point-min) (point-max)))
     (goto-char (point-min))
     (when read-only-p (read-only-mode 1))))

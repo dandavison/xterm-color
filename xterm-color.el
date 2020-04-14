@@ -423,6 +423,9 @@ by using other functions."
             (setq ,SGR-list (cdr ,SGR-list))))))))
 
 
+(defsubst xterm-color--skip-24 (SGR-list)
+  (nthcdr 5 SGR-list))
+
 (defsubst xterm-color--dispatch-SGR (SGR-list)
   "Update state machine based on SGR-LIST which should be a list of SGR attributes (integers)."
   (xterm-color--create-SGR-table (elem SGR-list)
@@ -447,12 +450,12 @@ by using other functions."
 
     (:match ((and (eq 38 (cl-first SGR-list))
                   (eq 2 (cl-second SGR-list)))          ; 24-bit FG color
-             (lambda (x) (cdr (cl-cddddr x))))
+             'xterm-color--skip-24)
             (set-a! +truecolor+)
             (set-truecolor! (cddr SGR-list) xterm-color--current-fg))
     (:match ((and (eq 48 (cl-first SGR-list))
                   (eq 2 (cl-second SGR-list)))          ; 24-bit BG color
-             (lambda (x) (cdr (cl-cddddr x))))
+             'xterm-color--skip-24)
             (set-a! +truecolor+)
             (set-truecolor! (cddr SGR-list) xterm-color--current-bg))
     (:match (38 'cl-cdddr)                              ; XTERM 256 FG color
